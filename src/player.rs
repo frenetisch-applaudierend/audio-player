@@ -5,6 +5,7 @@ use url::Url;
 
 pub struct Player {
     playbin: gstreamer::Element,
+    duration: Option<Duration>,
 }
 
 impl Player {
@@ -30,7 +31,10 @@ impl Player {
 
         playbin.set_property_from_value("flags", &flags);
 
-        Ok(Self { playbin })
+        Ok(Self {
+            playbin,
+            duration: None,
+        })
     }
 
     pub fn play(&mut self) -> Result<(), anyhow::Error> {
@@ -46,10 +50,22 @@ impl Player {
         position.into()
     }
 
+    pub fn duration(&mut self) -> Duration {
+        if let Some(duration) = self.duration {
+            return duration;
+        }
+
+        let Some(duration) = self.playbin.query_duration::<gstreamer::ClockTime>() else {
+            return Default::default();
+        };
+
+        let duration = duration.into();
+        self.duration.replace(duration);
+        duration
+    }
+
     pub fn is_playing(&self) -> bool {
-        let state = self.playbin.current_state();
-        println!("Current state: {:?}", state);
-        state == gstreamer::State::Playing
+        self.playbin.current_state() == gstreamer::State::Playing
     }
 }
 
