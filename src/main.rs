@@ -1,19 +1,23 @@
-use std::{io::stdout, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use clap::Parser;
+use smol::stream::{Stream, StreamExt};
+
 use cli::Cli;
 use commands::commands;
 use player::Player;
-use smol::{
-    stream::{Stream, StreamExt},
-    Timer,
-};
-use termion::raw::IntoRawMode;
+use ui::UserInterface;
 
 mod cli;
 mod commands;
 mod player;
 mod ui;
+
+struct State {
+    player: Player,
+    ui: UserInterface,
+    saved_positions: HashMap<char, Duration>,
+}
 
 fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
@@ -23,11 +27,15 @@ fn main() -> Result<(), anyhow::Error> {
 
     println!("Playing {}", url.as_str());
 
-    let mut out = std::io::stdout().into_raw_mode()?;
+    let player = Player::new(url)?;
+    let ui = UserInterface::setup()?;
+    let mut state = State {
+        player,
+        ui,
+        saved_positions: HashMap::new(),
+    };
 
-    let mut player = Player::new(url)?;
-
-    player.play()?;
+    state.player.play()?;
 
     // // Add a bus watch, so we get notified when a message arrives
     // let bus = playbin.bus().unwrap();
@@ -36,10 +44,20 @@ fn main() -> Result<(), anyhow::Error> {
     //     glib::ControlFlow::Continue
     // })?;
 
-    smol::block_on(main_loop(player))
+    let res = smol::block_on(main_loop(&mut state));
+
+    let State {
+        player: _,
+        ui,
+        saved_positions: _,
+    } = state;
+
+    ui.restore()?;
+
+    res
 }
 
-async fn main_loop(mut player: Player) -> Result<(), anyhow::Error> {
+async fn main_loop(state: &mut State) -> Result<(), anyhow::Error> {
     let commands = commands().map(|c| Event::Command(c));
     let ticks = ticks().map(|_| Event::Tick);
 
@@ -47,10 +65,25 @@ async fn main_loop(mut player: Player) -> Result<(), anyhow::Error> {
 
     while let Some(event) = events.next().await {
         if let Event::Command(cmd) = event {
-            println!("{:?}", cmd);
+            use commands::Command::*;
+
+            match cmd {
+                TogglePlaying => state.player.toggle_playing()?,
+                SavePosition(pos) => {
+                    state
+                        .saved_positions
+                        .insert(pos, state.player.current_position());
+                }
+                RestorePosition(pos) => {
+                    if let Some(duration) = state.saved_positions.get(&pos) {
+                        state.player.seek_to(*duration)?;
+                    }
+                }
+                Quit => return Ok(()),
+            }
         }
 
-        ui::draw_frame(&mut player);
+        state.ui.draw_frame(&mut state.player)?;
     }
 
     Ok(())

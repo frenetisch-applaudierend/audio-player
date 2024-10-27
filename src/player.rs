@@ -1,6 +1,10 @@
 use std::time::Duration;
 
-use gstreamer::prelude::{ElementExt, ElementExtManual, ObjectExt};
+use anyhow::Context;
+use gstreamer::{
+    prelude::{ElementExt, ElementExtManual, ObjectExt},
+    ClockTime,
+};
 use url::Url;
 
 pub struct Player {
@@ -38,8 +42,29 @@ impl Player {
     }
 
     pub fn play(&mut self) -> Result<(), anyhow::Error> {
-        self.playbin.set_state(gstreamer::State::Playing)?;
+        self.playbin
+            .set_state(gstreamer::State::Playing)
+            .context("Failed to set playing state")?;
         Ok(())
+    }
+
+    pub fn pause(&mut self) -> Result<(), anyhow::Error> {
+        self.playbin
+            .set_state(gstreamer::State::Paused)
+            .context("Failed to set paused state")?;
+        Ok(())
+    }
+
+    pub fn toggle_playing(&mut self) -> Result<(), anyhow::Error> {
+        if self.is_playing() {
+            self.pause()
+        } else {
+            self.play()
+        }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playbin.current_state() == gstreamer::State::Playing
     }
 
     pub fn current_position(&self) -> Duration {
@@ -64,8 +89,14 @@ impl Player {
         duration
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.playbin.current_state() == gstreamer::State::Playing
+    pub fn seek_to(&self, duration: Duration) -> Result<(), anyhow::Error> {
+        self.playbin
+            .seek_simple(
+                gstreamer::SeekFlags::FLUSH,
+                ClockTime::from_nseconds(duration.as_nanos() as u64),
+            )
+            .context("Could not seek to position")?;
+        Ok(())
     }
 }
 
