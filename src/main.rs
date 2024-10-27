@@ -1,12 +1,19 @@
-use std::time::Duration;
+use std::{io::stdout, time::Duration};
 
 use clap::Parser;
 use cli::Cli;
+use commands::commands;
 use player::Player;
-use smol::Timer;
+use smol::{
+    stream::{Stream, StreamExt},
+    Timer,
+};
+use termion::raw::IntoRawMode;
 
 mod cli;
+mod commands;
 mod player;
+mod ui;
 
 fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
@@ -15,6 +22,8 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     println!("Playing {}", url.as_str());
+
+    let mut out = std::io::stdout().into_raw_mode()?;
 
     let mut player = Player::new(url)?;
 
@@ -31,16 +40,28 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn main_loop(mut player: Player) -> Result<(), anyhow::Error> {
-    loop {
-        let time = player.current_position();
-        let duration = player.duration();
-        let playing = player.is_playing();
+    let commands = commands().map(|c| Event::Command(c));
+    let ticks = ticks().map(|_| Event::Tick);
 
-        println!(
-            "Player at {:?} / {:?}, currently playing: {}",
-            time, duration, playing
-        );
+    let mut events = commands.or(ticks).boxed();
 
-        Timer::after(Duration::from_secs(1)).await;
+    while let Some(event) = events.next().await {
+        if let Event::Command(cmd) = event {
+            println!("{:?}", cmd);
+        }
+
+        ui::draw_frame(&mut player);
     }
+
+    Ok(())
+}
+
+fn ticks() -> impl Stream<Item = ()> {
+    smol::Timer::interval(Duration::from_millis(100)).map(|_| ())
+}
+
+#[derive(Debug)]
+enum Event {
+    Command(commands::Command),
+    Tick,
 }
